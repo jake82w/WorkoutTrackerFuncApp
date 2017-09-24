@@ -15,10 +15,7 @@ namespace WorkoutTrackerFuncApp
         {
             log.Info("C# HTTP trigger function processed a request.");
 
-            // parse query parameter
-            string name = req.GetQueryNameValuePairs()
-                .FirstOrDefault(q => string.Compare(q.Key, "name", true) == 0)
-                .Value;
+            string name = GetUserId(req, log);
 
             // Get request body
             dynamic data = await req.Content.ReadAsAsync<object>();
@@ -29,6 +26,18 @@ namespace WorkoutTrackerFuncApp
             return name == null
                 ? req.CreateResponse(HttpStatusCode.BadRequest, "Please pass a name on the query string or in the request body")
                 : req.CreateResponse(HttpStatusCode.OK, "Hello " + name);
+        }
+
+        // Need to make this more secure in the future. Need to get the value from the JWT token. 
+        // Header value can be modified
+        //
+        public static string GetUserId(HttpRequestMessage req, TraceWriter log)
+        {
+            string id = req.Headers.GetValues("X-MS-CLIENT-PRINCIPAL-ID").FirstOrDefault();
+
+            log.Info("X-MS-CLIENT-PRINCIPAL-ID:" + id);
+
+            return id;
         }
     }
 }
