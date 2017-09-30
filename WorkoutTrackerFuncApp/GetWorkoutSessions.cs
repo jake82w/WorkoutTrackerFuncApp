@@ -5,85 +5,83 @@ using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Azure.WebJobs.Host;
-using Belgrade.SqlClient.SqlDb;
-using Belgrade.SqlClient;
 using System.Data.SqlClient;
 using System.Configuration;
 using System;
+using System.Collections.Generic;
 
 namespace WorkoutTrackerFuncApp
 {
     public static class GetWorkoutSessions
     {
-        [FunctionName("GetWorkoutSessions")]
-        public static async Task<HttpResponseMessage> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = null)]HttpRequestMessage req, TraceWriter log)
-        {
-            log.Info("C# HTTP trigger function processed a request.");
-
-            var query = @"select 
-                                ws.Id, 
+        public const string GetQuery = @"select 
+                                ws.Id,
                                 ws.Name, 
                                 ws.StartTime, 
                                 ws.EndTime 
-                            from [WorkoutSessions] ws 
-                            Inner Join [Users] u on u.Id = ws.UserId
-                            WHERE u.PrincipalId = @principalId";
+                            from [WorkoutSessions] ws  
+                            Inner Join [AppUsers] u on u.Id = ws.AppUserId
+                            WHERE u.PrincipalId = " + Constants.SQL_PRINCIPAL_ID + ";";
 
-            return await GetSqlHelper(req, log, query);
+        public static object createGetObject(SqlDataReader reader)
+        {
+            var s = new
+            {
+                Id = reader.GetGuid(0),
+                Name = reader.GetString(1),
+                StartDate = reader.GetDateTime(2),
+                EndDate = reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3)
+            };
+
+            return s;
         }
 
-        // Need to make this more secure in the future. Need to get the value from the JWT token. 
-        // Header value can be modified
-        //
-        public static string GetUserId(HttpRequestMessage req, TraceWriter log)
+        [FunctionName("WorkoutSessions")]
+        public static async Task<HttpResponseMessage> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "WorkoutSessions")]HttpRequestMessage req, TraceWriter log)
         {
-            string id = req.Headers.GetValues("X-MS-CLIENT-PRINCIPAL-ID").FirstOrDefault();
-
-            log.Info("X-MS-CLIENT-PRINCIPAL-ID:" + id);
-
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Delete this in the future once auth is working !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            if (string.IsNullOrEmpty(id))
-            {
-                log.Info("X-MS-CLIENT-PRINCIPAL-ID is null");
-                id = "noauthsetupyetId";
-            }
-
-            return id;
+            log.Info("C# HTTP GetWorkoutSessions function.");
+            return await Helper.GetSqlHelper(
+                req: req,
+                log: log,
+                isList: true,
+                query: GetQuery,
+                parameters: null,
+                returnObject: createGetObject);
         }
+    }
 
-        public static async Task<HttpResponseMessage> GetSqlHelper(
-            HttpRequestMessage req,
-            TraceWriter log,
-            string query)
+    public static class GetWorkoutSession
+    {
+        public const string GetQuery = @"select 
+                                ws.Id,
+                                ws.Name, 
+                                ws.StartTime, 
+                                ws.EndTime 
+                            from [WorkoutSessions] ws  
+                            Inner Join [AppUsers] u on u.Id = ws.AppUserId
+                            WHERE u.PrincipalId = " + Constants.SQL_PRINCIPAL_ID + @" and
+                            ws.id = " + Constants.SQL_SESSION_ID + " ; ";
+
+        [FunctionName("WorkoutSession")]
+        public static async Task<HttpResponseMessage> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "WorkoutSessions/{sessionId}")]HttpRequestMessage req, string sessionId, TraceWriter log)
         {
-            try
+            log.Info("C# HTTP GetWorkoutSessions function contained a sessionId.");
+            Guid parsedSessionId;
+            if (!Guid.TryParse(sessionId, out parsedSessionId))
             {
-                var connectionString = ConfigurationManager.ConnectionStrings["sqldb_connection"].ConnectionString;
-                if (string.IsNullOrEmpty(connectionString))
-                {
-                    log.Error($"SQL connection string");
-                    throw new ArgumentNullException("SQL connection string");
-                }
-
-                var httpStatus = HttpStatusCode.OK;
-                SqlCommand cmd = new SqlCommand(connectionString);
-                var principalId = GetUserId(req, log);
-                cmd.Parameters.Add(new SqlParameter("@principalId", principalId));
-
-                IQueryMapper map = new QueryMapper(connectionString);
-                var a = await map.GetStringAsync(cmd);
-
-                string body = await (new QueryMapper(connectionString)
-                            .OnError(ex => { httpStatus = HttpStatusCode.InternalServerError; }))
-                .GetStringAsync(query);
-
-                return new HttpResponseMessage() { Content = new StringContent(body), StatusCode = httpStatus };
+                return req.CreateResponse(HttpStatusCode.BadRequest, "Please pass a valid session id.");
             }
-            catch (Exception ex)
-            {
-                log.Error($"C# Http trigger function exception: {ex.Message}");
-                return new HttpResponseMessage() { Content = new StringContent(""), StatusCode = HttpStatusCode.InternalServerError };
-            }
+
+            var sqlParamSessionId = new SqlParameter(Constants.SQL_SESSION_ID, parsedSessionId);
+            var sqlParams = new SqlParameter[] { sqlParamSessionId };
+
+            return await Helper.GetSqlHelper(
+                req: req,
+                log: log,
+                isList: false,
+                query: GetQuery,
+                parameters: sqlParams,
+                returnObject: GetWorkoutSessions.createGetObject);
         }
     }
 }
